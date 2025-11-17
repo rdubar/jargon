@@ -1,0 +1,23 @@
+[project]
+name = "jargon"
+version = "0.1.0"
+description = "Small utility to convert the Jargon File DocBook XML and print random entries."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["lxml>=4.9"]
+
+[project.scripts]
+jargon = "jargon_tool:main"
+
+[tool.uv]
+index-url = "https://pypi.org/simple"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["jargon_tool.py", "data"]
+
+[tool.hatch.build.targets.sdist]
+only-include = ["jargon_tool.py", "data", "README.md", "pyproject.toml"]
