@@ -8,6 +8,31 @@ Source data: Jargon File 4.1.0 (DocBook XML), last updated 2003 by Eric S. Raymo
 
 ## Install
 
+### Quick (no clone)
+- With uv:
+  ```bash
+  uv tool install 'git+https://github.com/rdubar/jargon.git'
+  ```
+- With pip/pipx:
+  ```bash
+  pipx install 'git+https://github.com/rdubar/jargon.git'
+  # or if you really want a global pip install:
+  pip install 'git+https://github.com/rdubar/jargon.git'
+  ```
+
+### From a clone
+Clone via GitHub CLI or git, then install in an isolated env:
+
+- Using gh:
+  ```bash
+  gh repo clone rdubar/jargon && cd jargon
+  ```
+- Using git:
+  ```bash
+  git clone https://github.com/rdubar/jargon.git
+  cd jargon
+  ```
+
 - With uv (recommended):
   ```bash
   uv venv && source .venv/bin/activate
