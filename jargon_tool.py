@@ -233,7 +233,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument(
         "term",
-        nargs="?",
+        nargs="*",
         help="Term or id to display (defaults to a random entry)",
     )
     parser.add_argument(
@@ -289,6 +289,11 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     args = parser.parse_args(argv_list)
+
+    # Join multi-word terms to support queries like "black hat".
+    if isinstance(args.term, list):
+        joined = " ".join(args.term).strip()
+        args.term = joined if joined else None
 
     # Compatibility: allow `jargon build` style.
     if args.term in {"build", "xml-to-json"} and not args.build:
