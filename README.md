@@ -88,6 +88,10 @@ Both commands accept `--xml / --json` flags to point at alternative sources/outp
 - Requires Python 3.10+. Make sure you include the dot in `pip install -e .`.
 - If the console script isn’t on your PATH, you can always run `python jargon_tool.py --help`.
 
+## License
+
+[The Unlicense](LICENSE) — public domain. No attribution required.
+
 ## Credits
 
 This utility incorporates `Jargon File 4.1.0` of 2003 by Eric S. Raymond <esr@snark.thyrsus.com>.
