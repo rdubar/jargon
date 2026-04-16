@@ -92,6 +92,10 @@ Both commands accept `--xml / --json` flags to point at alternative sources/outp
 
 [The Unlicense](LICENSE) — public domain. No attribution required.
 
+## Author
+
+**Roger Dubar** — [rdubar@gmail.com](mailto:rdubar@gmail.com) — [github.com/rdubar](https://github.com/rdubar)
+
 ## Credits
 
 This utility incorporates `Jargon File 4.1.0` of 2003 by Eric S. Raymond <esr@snark.thyrsus.com>.
