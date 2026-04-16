@@ -90,7 +90,9 @@ Both commands accept `--xml / --json` flags to point at alternative sources/outp
 
 ## License
 
-[The Unlicense](LICENSE) — public domain. No attribution required.
+The utility code is MIT licensed — see [LICENSE](LICENSE).
+
+The bundled Jargon File data (`data/jargon.xml`, `data/jargon.json`) is copyright 1993 Eric S. Raymond, all rights reserved, and is included here for personal and educational use only.
 
 ## Author
 
@@ -98,4 +100,4 @@ Both commands accept `--xml / --json` flags to point at alternative sources/outp
 
 ## Credits
 
-This utility incorporates `Jargon File 4.1.0` of 2003 by Eric S. Raymond <esr@snark.thyrsus.com>.
+Jargon File 4.1.0 by Eric S. Raymond <esr@snark.thyrsus.com> — https://catb.org/jargon/
