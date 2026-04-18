@@ -101,3 +101,5 @@ The bundled Jargon File data (`data/jargon.xml`, `data/jargon.json`) is copyrigh
 ## Credits
 
 Jargon File 4.1.0 by Eric S. Raymond <esr@snark.thyrsus.com> — https://catb.org/jargon/
+
+The actively maintained community edition of the Jargon File is at [agiacalone/jargonfile](https://github.com/agiacalone/jargonfile) — submissions and corrections welcome there.
