@@ -1,10 +1,15 @@
 [project]
-name = "jargon"
+name = "jargon-file"
 version = "0.1.0"
 description = "Small utility to convert the Jargon File DocBook XML and print random entries."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["lxml>=4.9"]
+
+[project.urls]
+Homepage = "https://github.com/rdubar/jargon"
+Repository = "https://github.com/rdubar/jargon"
+PyPI = "https://pypi.org/project/jargon-file/"
 
 [project.scripts]
 jargon = "jargon_tool:main"

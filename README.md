@@ -1,5 +1,7 @@
 # Jargon utility
 
+[![PyPI](https://img.shields.io/pypi/v/jargon-file)](https://pypi.org/project/jargon-file/)
+
 Small CLI for browsing the Jargon File from your terminal — random entries, term lookups, colored output. Supports both the classic ESR edition and the actively maintained community edition.
 
 > "The Jargon File is a glossary and usage dictionary of slang used by computer programmers. The original Jargon File was a collection of terms from technical cultures such as the MIT AI Lab, the Stanford AI Lab (SAIL) and others of the old ARPANET AI/LISP/PDP-10 communities, including Bolt, Beranek and Newman (BBN), Carnegie Mellon University, and Worcester Polytechnic Institute. It was published in paperback form in 1983 as The Hacker's Dictionary (edited by Guy Steele) and revised in 1991 as The New Hacker's Dictionary (ed. Eric S. Raymond; third edition published 1996)." — [Wikipedia](https://en.wikipedia.org/wiki/Jargon_File)
@@ -11,14 +13,13 @@ Small CLI for browsing the Jargon File from your terminal — random entries, te
 
 ## Install
 
-### Quick (no clone)
 ```bash
-uv tool install 'git+https://github.com/rdubar/jargon.git'
+uv tool install jargon-file
 # or:
-pipx install 'git+https://github.com/rdubar/jargon.git'
+pipx install jargon-file
 ```
 
-### From a clone
+### From source
 ```bash
 gh repo clone rdubar/jargon && cd jargon
 uv venv && source .venv/bin/activate

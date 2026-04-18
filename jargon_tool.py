@@ -9,12 +9,20 @@ import sys
 import tempfile
 import urllib.request
 import zipfile
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from textwrap import indent
 
 from lxml import etree
 from lxml import html as lxml_html
 
+try:
+    __version__ = _pkg_version("jargon-file")
+except PackageNotFoundError:
+    __version__ = "0.1.0"
+
+PROJECT_URL = "https://github.com/rdubar/jargon"
 
 # Basic ANSI styling for nicer terminal output.
 COLOR_EMPH = "\033[36m"   # cyan
@@ -378,8 +386,14 @@ def build_parser() -> argparse.ArgumentParser:
         description="Show Jargon File entries (random or by term). Use --build to regenerate the JSON from DocBook XML.",
         usage="%(prog)s [term] [options] | %(prog)s --build [options]",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        epilog=f"Project home: {PROJECT_URL}",
     )
 
+    parser.add_argument(
+        "--version", "-V",
+        action="version",
+        version=f"%(prog)s {__version__}  <{PROJECT_URL}>",
+    )
     parser.add_argument(
         "term",
         nargs="*",
