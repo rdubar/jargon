@@ -6,10 +6,14 @@ import argparse
 import json
 import random
 import sys
+import tempfile
+import urllib.request
+import zipfile
 from pathlib import Path
 from textwrap import indent
 
 from lxml import etree
+from lxml import html as lxml_html
 
 
 # Basic ANSI styling for nicer terminal output.
@@ -21,6 +25,133 @@ COLOR_RESET = "\033[0m"
 
 DEFAULT_XML = Path(__file__).resolve().parent / "data" / "jargon.xml"
 DEFAULT_JSON = Path(__file__).resolve().parent / "data" / "jargon.json"
+
+# Community edition — agiacalone/jargonfile, pinned commit for stability.
+COMMUNITY_COMMIT = "e23acb36af3fb214f9a2fa2f729a5d11331a062e"
+COMMUNITY_ZIP_URL = f"https://github.com/agiacalone/jargonfile/archive/{COMMUNITY_COMMIT}.zip"
+COMMUNITY_JSON = Path(__file__).resolve().parent / "data" / "community.json"
+
+
+# ---------------------------------------------------------------------------
+# Community edition — fetch and parse
+# ---------------------------------------------------------------------------
+
+def _progress(msg: str, end: str = "") -> None:
+    print(f"\r{msg:<72}", end=end, flush=True)
+
+
+def _download_zip(url: str, dest: Path) -> None:
+    """Download url to dest with a live progress line."""
+    _progress(f"Downloading community Jargon File…")
+
+    def _reporthook(block: int, block_size: int, total: int) -> None:
+        done = block * block_size
+        if total > 0:
+            pct = min(done / total * 100, 100)
+            mb_done = done / 1_048_576
+            mb_total = total / 1_048_576
+            _progress(f"Downloading… {mb_done:.1f} / {mb_total:.1f} MB  ({pct:.0f}%)")
+        else:
+            _progress(f"Downloading… {done / 1_048_576:.1f} MB")
+
+    urllib.request.urlretrieve(url, dest, reporthook=_reporthook)
+    print()  # newline after progress
+
+
+def _parse_entry_html(path: Path) -> dict | None:
+    """Parse one community entry HTML file into the shared entry schema."""
+    try:
+        # Pass raw bytes — lxml handles encoding detection from the XML declaration
+        raw = path.read_bytes()
+        tree = lxml_html.fromstring(raw)
+    except Exception:
+        return None
+
+    # The inner <dt id="TERM"> carries the entry id
+    dt_nodes = tree.xpath('.//dt[@id]')
+    if not dt_nodes:
+        return None
+    dt = dt_nodes[-1]  # take innermost when nested
+
+    entry_id = dt.get("id", "")
+    bold = dt.find(".//b")
+    term = bold.text_content().strip() if bold is not None else entry_id
+
+    pronunciations = [
+        el.text_content().strip()
+        for el in dt.xpath('.//span[@class="pronunciation"]')
+        if el.text_content().strip()
+    ]
+    grammar_els = dt.xpath('.//span[@class="grammar"]')
+    grammar = grammar_els[0].text_content().strip() if grammar_els else None
+    pronunciation = "  ".join(pronunciations) if pronunciations else None
+
+    # Each <dd> is a separate sense
+    senses = []
+    for dd in tree.xpath('.//dd'):
+        paras = dd.xpath('.//p')
+        parts = [p.text_content().strip() for p in paras if p.text_content().strip()]
+        definition = "\n".join(parts) if parts else dd.text_content().strip()
+        if definition:
+            senses.append({
+                "definition": definition,
+                "pronunciation": pronunciation,
+                "grammar": grammar,
+            })
+
+    if not senses:
+        return None
+
+    return {"id": entry_id, "term": term, "senses": senses}
+
+
+def fetch_community(json_path: Path = COMMUNITY_JSON) -> None:
+    """Download the community Jargon File and build a JSON cache."""
+    json_path = Path(json_path)
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        zip_path = tmp_path / "jargonfile.zip"
+
+        _download_zip(COMMUNITY_ZIP_URL, zip_path)
+
+        _progress("Extracting archive…")
+        with zipfile.ZipFile(zip_path) as zf:
+            # Only extract the html/ subtree to save time
+            members = [m for m in zf.namelist() if "/html/" in m and m.endswith(".html")]
+            total_files = len(members)
+            zf.extractall(tmp_path, members=members)
+        print(f"\rExtracted {total_files} HTML files.{' ' * 20}")
+
+        # Entry files live in letter subdirectories: html/A/abbrev.html
+        # Index pages (html/A.html) are single-letter filenames — skip them.
+        html_root = next(tmp_path.glob("jargonfile-*/html"), None)
+        if html_root is None:
+            print("Error: could not find html/ directory in archive.", file=sys.stderr)
+            sys.exit(1)
+
+        entry_files = sorted(
+            p for p in html_root.rglob("*.html")
+            if p.parent != html_root  # skip top-level letter indexes
+        )
+
+        entries = []
+        total = len(entry_files)
+        _progress(f"Parsing 0 / {total} entries…")
+        for i, path in enumerate(entry_files, 1):
+            if i % 50 == 0 or i == total:
+                _progress(f"Parsing {i} / {total} entries…")
+            entry = _parse_entry_html(path)
+            if entry:
+                entries.append(entry)
+        print(f"\rParsed {len(entries)} entries from {total} files.{' ' * 20}")
+
+        _progress("Writing community.json…")
+        with json_path.open("w", encoding="utf-8") as f:
+            json.dump(entries, f, indent=2, ensure_ascii=False)
+        print(f"\rCommunity data saved → {json_path}{' ' * 20}")
+        print(f"Run 'jargon -c' to use the community edition.")
 
 
 def _local_tag(tag: str) -> str:
@@ -215,13 +346,31 @@ def cmd_build(args: argparse.Namespace) -> None:
     xml_to_json(args.xml, args.json)
 
 
+def cmd_fetch(args: argparse.Namespace) -> None:
+    fetch_community(args.community_json)
+
+
 def cmd_random(args: argparse.Namespace) -> None:
-    ensure_json(args.json, args.xml, force=args.rebuild)
-    try:
-        show_entry(args.json, show_all=args.show_all, term=args.term)
-    except KeyError as exc:
-        print(exc, file=sys.stderr)
-        sys.exit(1)
+    if args.community:
+        if not args.community_json.exists():
+            print(
+                f"Community data not found: {args.community_json}\n"
+                "Run:  jargon fetch",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        try:
+            show_entry(args.community_json, show_all=args.show_all, term=args.term)
+        except KeyError as exc:
+            print(exc, file=sys.stderr)
+            sys.exit(1)
+    else:
+        ensure_json(args.json, args.xml, force=args.rebuild)
+        try:
+            show_entry(args.json, show_all=args.show_all, term=args.term)
+        except KeyError as exc:
+            print(exc, file=sys.stderr)
+            sys.exit(1)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -268,11 +417,24 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show all senses instead of a single random sense",
     )
+    parser.add_argument(
+        "-c",
+        "--community",
+        action="store_true",
+        help="Use the community edition data (requires: jargon fetch)",
+    )
+    parser.add_argument(
+        "--community-json",
+        default=COMMUNITY_JSON,
+        type=Path,
+        help=argparse.SUPPRESS,
+    )
 
     parser.set_defaults(
         build=False,
         rebuild=False,
         show_all=False,
+        community=False,
         term=None,
     )
 
@@ -295,13 +457,20 @@ def main(argv: list[str] | None = None) -> None:
         joined = " ".join(args.term).strip()
         args.term = joined if joined else None
 
-    # Compatibility: allow `jargon build` style.
+    # Compatibility: allow `jargon build` / `jargon fetch` style.
     if args.term in {"build", "xml-to-json"} and not args.build:
         args.build = True
         args.term = None
+    if args.term == "fetch":
+        args.fetch = True
+        args.term = None
+    else:
+        args.fetch = getattr(args, "fetch", False)
 
     if args.build:
         cmd_build(args)
+    elif args.fetch:
+        cmd_fetch(args)
     else:
         cmd_random(args)
 
