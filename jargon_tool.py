@@ -9,6 +9,7 @@ import sys
 import tempfile
 import urllib.request
 import zipfile
+from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
@@ -20,9 +21,10 @@ from lxml import html as lxml_html
 try:
     __version__ = _pkg_version("jargon-file")
 except PackageNotFoundError:
-    __version__ = "0.1.0"
+    __version__ = "dev"
 
 PROJECT_URL = "https://github.com/rdubar/jargon"
+PYPI_API_URL = "https://pypi.org/pypi/jargon-file/json"
 
 # Basic ANSI styling for nicer terminal output.
 COLOR_EMPH = "\033[36m"   # cyan
@@ -32,25 +34,57 @@ COLOR_RESET = "\033[0m"
 
 
 DEFAULT_XML = Path(__file__).resolve().parent / "data" / "jargon.xml"
-DEFAULT_JSON = Path(__file__).resolve().parent / "data" / "jargon.json"
 
-# Community edition — agiacalone/jargonfile, pinned commit for stability.
-COMMUNITY_COMMIT = "e23acb36af3fb214f9a2fa2f729a5d11331a062e"
-COMMUNITY_ZIP_URL = f"https://github.com/agiacalone/jargonfile/archive/{COMMUNITY_COMMIT}.zip"
+# Community edition — agiacalone/jargonfile (primary data source)
+COMMUNITY_REPO = "agiacalone/jargonfile"
+COMMUNITY_API_URL = f"https://api.github.com/repos/{COMMUNITY_REPO}/commits/HEAD"
+COMMUNITY_ZIP_TEMPLATE = "https://github.com/{repo}/archive/{sha}.zip"
 COMMUNITY_JSON = Path(__file__).resolve().parent / "data" / "community.json"
+COMMUNITY_META = Path(__file__).resolve().parent / "data" / "community_meta.json"
+DEFAULT_JSON = COMMUNITY_JSON  # community is the primary data source
 
 
 # ---------------------------------------------------------------------------
-# Community edition — fetch and parse
+# Helpers
 # ---------------------------------------------------------------------------
 
 def _progress(msg: str, end: str = "") -> None:
     print(f"\r{msg:<72}", end=end, flush=True)
 
 
+def _fetch_json_url(url: str, timeout: int = 10) -> dict:
+    """Fetch a JSON URL and return the parsed response."""
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.load(resp)
+
+
+def _fmt_date(iso: str) -> str:
+    """Return the YYYY-MM-DD portion of an ISO date string."""
+    return iso[:10]
+
+
+def _style(text: str, color: str) -> str:
+    return f"{color}{text}{COLOR_RESET}" if text else text
+
+
+def _detect_installer() -> tuple[str, str]:
+    """Return (installer_name, upgrade_command) based on the Python executable path."""
+    exe = str(Path(sys.executable).resolve())
+    if "uv" in exe and "tools" in exe:
+        return "uv tool", "uv tool upgrade jargon-file"
+    if "pipx" in exe:
+        return "pipx", "pipx upgrade jargon-file"
+    return "pip", "pip install --upgrade jargon-file"
+
+
+# ---------------------------------------------------------------------------
+# Community edition — fetch and parse
+# ---------------------------------------------------------------------------
+
 def _download_zip(url: str, dest: Path) -> None:
     """Download url to dest with a live progress line."""
-    _progress(f"Downloading community Jargon File…")
+    _progress("Downloading community Jargon File…")
 
     def _reporthook(block: int, block_size: int, total: int) -> None:
         done = block * block_size
@@ -69,17 +103,15 @@ def _download_zip(url: str, dest: Path) -> None:
 def _parse_entry_html(path: Path) -> dict | None:
     """Parse one community entry HTML file into the shared entry schema."""
     try:
-        # Pass raw bytes — lxml handles encoding detection from the XML declaration
         raw = path.read_bytes()
         tree = lxml_html.fromstring(raw)
     except Exception:
         return None
 
-    # The inner <dt id="TERM"> carries the entry id
     dt_nodes = tree.xpath('.//dt[@id]')
     if not dt_nodes:
         return None
-    dt = dt_nodes[-1]  # take innermost when nested
+    dt = dt_nodes[-1]
 
     entry_id = dt.get("id", "")
     bold = dt.find(".//b")
@@ -94,7 +126,6 @@ def _parse_entry_html(path: Path) -> dict | None:
     grammar = grammar_els[0].text_content().strip() if grammar_els else None
     pronunciation = "  ".join(pronunciations) if pronunciations else None
 
-    # Each <dd> is a separate sense
     senses = []
     for dd in tree.xpath('.//dd'):
         paras = dd.xpath('.//p')
@@ -113,27 +144,42 @@ def _parse_entry_html(path: Path) -> dict | None:
     return {"id": entry_id, "term": term, "senses": senses}
 
 
-def fetch_community(json_path: Path = COMMUNITY_JSON) -> None:
-    """Download the community Jargon File and build a JSON cache."""
+def fetch_community(json_path: Path = COMMUNITY_JSON, meta_path: Path = COMMUNITY_META) -> None:
+    """Download the latest community Jargon File and build a JSON cache."""
     json_path = Path(json_path)
+    meta_path = Path(meta_path)
     json_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Resolve latest commit via GitHub API
+    _progress("Checking latest community commit…")
+    try:
+        commit_data = _fetch_json_url(
+            COMMUNITY_API_URL,
+            timeout=15,
+        )
+        sha = commit_data["sha"]
+        commit_date = commit_data["commit"]["committer"]["date"]
+    except Exception as exc:
+        print(f"\nCould not reach GitHub API: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"\rLatest commit: {sha[:8]}  ({_fmt_date(commit_date)}){' ' * 20}")
+
+    zip_url = COMMUNITY_ZIP_TEMPLATE.format(repo=COMMUNITY_REPO, sha=sha)
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         zip_path = tmp_path / "jargonfile.zip"
 
-        _download_zip(COMMUNITY_ZIP_URL, zip_path)
+        _download_zip(zip_url, zip_path)
 
         _progress("Extracting archive…")
         with zipfile.ZipFile(zip_path) as zf:
-            # Only extract the html/ subtree to save time
             members = [m for m in zf.namelist() if "/html/" in m and m.endswith(".html")]
             total_files = len(members)
             zf.extractall(tmp_path, members=members)
         print(f"\rExtracted {total_files} HTML files.{' ' * 20}")
 
-        # Entry files live in letter subdirectories: html/A/abbrev.html
-        # Index pages (html/A.html) are single-letter filenames — skip them.
         html_root = next(tmp_path.glob("jargonfile-*/html"), None)
         if html_root is None:
             print("Error: could not find html/ directory in archive.", file=sys.stderr)
@@ -141,7 +187,7 @@ def fetch_community(json_path: Path = COMMUNITY_JSON) -> None:
 
         entry_files = sorted(
             p for p in html_root.rglob("*.html")
-            if p.parent != html_root  # skip top-level letter indexes
+            if p.parent != html_root
         )
 
         entries = []
@@ -159,61 +205,58 @@ def fetch_community(json_path: Path = COMMUNITY_JSON) -> None:
         with json_path.open("w", encoding="utf-8") as f:
             json.dump(entries, f, indent=2, ensure_ascii=False)
         print(f"\rCommunity data saved → {json_path}{' ' * 20}")
-        print(f"Run 'jargon -c' to use the community edition.")
 
+    # Save metadata sidecar
+    meta = {
+        "commit": sha,
+        "commit_date": commit_date,
+        "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "entries": len(entries),
+    }
+    meta_path.write_text(json.dumps(meta, indent=2) + "\n")
+
+    print(f"Run 'jargon -c' to use the community edition.")
+
+
+# ---------------------------------------------------------------------------
+# Classic XML → JSON
+# ---------------------------------------------------------------------------
 
 def _local_tag(tag: str) -> str:
-    """Strip any XML namespace from a tag name."""
     return tag.rsplit("}", 1)[-1] if "}" in tag else tag
 
 
-def _style(text: str, color: str) -> str:
-    return f"{color}{text}{COLOR_RESET}" if text else text
-
-
 def render_element(node: etree._Element) -> str:
-    """Render an element's text content, styling emphasis/references."""
     tag = _local_tag(node.tag)
-
     parts: list[str] = []
     if node.text:
         parts.append(node.text)
-
     for child in node:
         parts.append(render_element(child))
         if child.tail:
             parts.append(child.tail)
-
     combined = "".join(parts)
-
     if tag == "emphasis":
         return _style(combined, COLOR_EMPH)
     if tag in {"xref", "ulink", "link", "systemitem"}:
         return _style(combined, COLOR_REF)
-
     return combined
 
 
 def render_paragraph(paragraph: etree._Element) -> str:
-    """Render a <para> to styled plain text without dropping nested content."""
     parts: list[str] = []
     if paragraph.text:
         parts.append(paragraph.text)
-
     for child in paragraph:
         parts.append(render_element(child))
         if child.tail:
             parts.append(child.tail)
-
     combined = "".join(parts)
-    # Collapse excessive whitespace but preserve single spaces.
     return " ".join(combined.split())
 
 
 def parse_glossentry(glossentry: etree._Element) -> dict:
-    """Parse a <glossentry> XML element into a dict entry."""
     entry_id = glossentry.get("id", "")
-
     term_el = glossentry.find("glossterm")
     term = term_el.text.strip() if term_el is not None else entry_id
 
@@ -237,20 +280,12 @@ def parse_glossentry(glossentry: etree._Element) -> dict:
             if rendered:
                 text_parts.append(rendered)
         definition = "\n".join(text_parts) if text_parts else ""
-
-        senses.append(
-            {
-                "definition": definition,
-                "pronunciation": pronunciation,
-                "grammar": grammar,
-            }
-        )
+        senses.append({"definition": definition, "pronunciation": pronunciation, "grammar": grammar})
 
     return {"id": entry_id, "term": term, "senses": senses}
 
 
 def xml_to_json(xml_path: Path, json_path: Path) -> None:
-    """Convert Jargon XML file to a JSON list of entries."""
     xml_path = Path(xml_path)
     json_path = Path(json_path)
 
@@ -258,17 +293,12 @@ def xml_to_json(xml_path: Path, json_path: Path) -> None:
         raise FileNotFoundError(f"XML source not found: {xml_path}")
 
     print(f"Reading XML: {xml_path}")
-
     with xml_path.open("rb") as xml_file:
         parser = etree.XMLParser(recover=True)
         tree = etree.parse(xml_file, parser)
 
     root = tree.getroot()
-
-    entries = []
-    for glossentry in root.findall(".//glossentry"):
-        entry = parse_glossentry(glossentry)
-        entries.append(entry)
+    entries = [parse_glossentry(e) for e in root.findall(".//glossentry")]
 
     json_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"Parsed {len(entries)} entries. Writing JSON → {json_path}")
@@ -276,8 +306,11 @@ def xml_to_json(xml_path: Path, json_path: Path) -> None:
         json.dump(entries, json_file, indent=2, ensure_ascii=False)
 
 
+# ---------------------------------------------------------------------------
+# Entry display
+# ---------------------------------------------------------------------------
+
 def display_entry(entry: dict, show_all: bool) -> None:
-    """Print an entry with styling."""
     print("============================================================")
     print(f"{COLOR_TITLE}{entry['term']}{COLOR_RESET}")
     print("============================================================")
@@ -296,22 +329,19 @@ def display_entry(entry: dict, show_all: bool) -> None:
 
 
 def choose_entry(entries: list[dict], term: str | None) -> dict:
-    """Pick an entry by term/id (case-insensitive), or at random if not provided."""
     if not term:
         return random.choice(entries)
 
     query = term.lower()
     exact = [
-        e
-        for e in entries
+        e for e in entries
         if e.get("term", "").lower() == query or e.get("id", "").lower() == query
     ]
     if exact:
         return random.choice(exact)
 
     partial = [
-        e
-        for e in entries
+        e for e in entries
         if query in e.get("term", "").lower() or query in e.get("id", "").lower()
     ]
     if partial:
@@ -321,7 +351,6 @@ def choose_entry(entries: list[dict], term: str | None) -> dict:
 
 
 def show_entry(json_path: Path, show_all: bool = False, term: str | None = None) -> dict:
-    """Print and return an entry (random or matched)."""
     json_path = Path(json_path)
     if not json_path.exists():
         raise FileNotFoundError(f"JSON data not found: {json_path}")
@@ -331,17 +360,21 @@ def show_entry(json_path: Path, show_all: bool = False, term: str | None = None)
 
     entry = choose_entry(entries, term)
     display_entry(entry, show_all)
-
     return entry
 
 
 def ensure_json(json_path: Path, xml_path: Path, force: bool = False) -> None:
-    """Create JSON data from XML if needed (or forced)."""
     json_path = Path(json_path)
     xml_path = Path(xml_path)
     needs_regen = force or not json_path.exists()
 
     if needs_regen:
+        if not xml_path.exists():
+            print(
+                f"Classic data not available. Run 'jargon fetch' to download the community edition.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         reason = "Rebuilding JSON" if force else "JSON missing; generating"
         print(f"{reason} from {xml_path}")
         xml_to_json(xml_path, json_path)
@@ -350,41 +383,115 @@ def ensure_json(json_path: Path, xml_path: Path, force: bool = False) -> None:
         raise FileNotFoundError(f"Unable to build JSON: {json_path}")
 
 
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
 def cmd_build(args: argparse.Namespace) -> None:
     xml_to_json(args.xml, args.json)
 
 
 def cmd_fetch(args: argparse.Namespace) -> None:
-    fetch_community(args.community_json)
+    fetch_community(COMMUNITY_JSON, COMMUNITY_META)
+
+
+def cmd_info(args: argparse.Namespace) -> None:
+    SEP = "=" * 60
+    print(SEP)
+    print(f"{COLOR_TITLE}jargon-file {__version__}{COLOR_RESET}   {PROJECT_URL}")
+    print(SEP)
+
+    # PyPI release date for installed version
+    try:
+        data = _fetch_json_url(PYPI_API_URL, timeout=6)
+        releases = data.get("releases", {}).get(__version__, [])
+        latest_ver = data["info"]["version"]
+        if releases:
+            release_date = _fmt_date(releases[0]["upload_time"])
+            print(f"Released {release_date} on PyPI", end="")
+            if latest_ver != __version__:
+                print(f"  (latest: {latest_ver} — run: jargon update)", end="")
+            print()
+    except Exception:
+        pass  # offline or version not on PyPI yet
+
+    print()
+
+    # Community edition
+    if COMMUNITY_META.exists():
+        meta = json.loads(COMMUNITY_META.read_text())
+        n = meta.get("entries", "?")
+        commit = meta.get("commit", "?")[:8]
+        commit_date = _fmt_date(meta.get("commit_date", "?"))
+        fetched = _fmt_date(meta.get("fetched_at", "?"))
+        print(f"Community edition {n} entries · data {commit_date} ({commit}) · fetched {fetched}")
+    elif COMMUNITY_JSON.exists():
+        with COMMUNITY_JSON.open() as f:
+            n = len(json.load(f))
+        print(f"Community edition {n} entries · (run 'jargon fetch' to refresh)")
+    else:
+        print(f"Community edition not downloaded  (run: jargon fetch)")
+
+    print()
+    print("Credits:")
+    print(f"  Original Jargon File by Eric S. Raymond <esr@snark.thyrsus.com>")
+    print(f"    https://catb.org/jargon/")
+    print(f"  Community edition maintained by {COMMUNITY_REPO}")
+    print(f"    https://github.com/{COMMUNITY_REPO}")
+
+
+def cmd_update(args: argparse.Namespace) -> None:
+    installer, upgrade_cmd = _detect_installer()
+    print(f"Installed: jargon-file {__version__}  (via {installer})")
+
+    try:
+        data = _fetch_json_url(PYPI_API_URL, timeout=6)
+        latest = data["info"]["version"]
+        releases = data.get("releases", {}).get(latest, [])
+        release_date = _fmt_date(releases[0]["upload_time"]) if releases else ""
+        if latest == __version__:
+            date_str = f"  (released {release_date})" if release_date else ""
+            print(f"Latest:    {latest}{date_str} — up to date")
+        else:
+            date_str = f", released {release_date}" if release_date else ""
+            print(f"Latest:    {latest}{date_str} — update available!")
+    except Exception:
+        print("Latest:    (could not reach PyPI)")
+
+    print()
+    print("To upgrade the tool:")
+    print(f"  {upgrade_cmd}")
+    print()
+    print("To update community data:")
+    print("  jargon fetch")
 
 
 def cmd_random(args: argparse.Namespace) -> None:
-    if args.community:
-        if not args.community_json.exists():
-            print(
-                f"Community data not found: {args.community_json}\n"
-                "Run:  jargon fetch",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        try:
-            show_entry(args.community_json, show_all=args.show_all, term=args.term)
-        except KeyError as exc:
-            print(exc, file=sys.stderr)
-            sys.exit(1)
-    else:
-        ensure_json(args.json, args.xml, force=args.rebuild)
-        try:
-            show_entry(args.json, show_all=args.show_all, term=args.term)
-        except KeyError as exc:
-            print(exc, file=sys.stderr)
-            sys.exit(1)
+    if not args.json.exists():
+        print(
+            f"Jargon data not found: {args.json}\n"
+            "Run:  jargon fetch",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    try:
+        show_entry(args.json, show_all=args.show_all, term=args.term)
+    except KeyError as exc:
+        print(exc, file=sys.stderr)
+        sys.exit(1)
 
+
+# ---------------------------------------------------------------------------
+# Parser
+# ---------------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Show Jargon File entries (random or by term). Use --build to regenerate the JSON from DocBook XML.",
-        usage="%(prog)s [term] [options] | %(prog)s --build [options]",
+        description=(
+            "Show Jargon File entries (random or by term). "
+            "Subcommands: fetch, build, info, update."
+        ),
+        usage="%(prog)s [term] [options]  |  %(prog)s {fetch,build,info,update}",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         epilog=f"Project home: {PROJECT_URL}",
     )
@@ -397,7 +504,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "term",
         nargs="*",
-        help="Term or id to display (defaults to a random entry)",
+        help="Term or id to display (defaults to a random entry); or a subcommand: fetch, build, info, update",
     )
     parser.add_argument(
         "--build",
@@ -405,52 +512,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Convert DocBook XML to JSON and exit",
     )
     parser.add_argument(
-        "-j",
-        "--json",
+        "-j", "--json",
         default=DEFAULT_JSON,
         type=Path,
-        help="JSON data file (output for --build; input for lookups)",
+        help="JSON data file",
     )
     parser.add_argument(
-        "-x",
-        "--xml",
+        "-x", "--xml",
         default=DEFAULT_XML,
         type=Path,
-        help="XML source to build JSON when needed",
+        help="XML source (classic edition)",
     )
     parser.add_argument(
-        "-r",
-        "--rebuild",
-        action="store_true",
-        help="Rebuild JSON from XML before picking an entry",
-    )
-    parser.add_argument(
-        "-a",
-        "--all",
+        "-a", "--all",
         dest="show_all",
         action="store_true",
         help="Show all senses instead of a single random sense",
     )
-    parser.add_argument(
-        "-c",
-        "--community",
-        action="store_true",
-        help="Use the community edition data (requires: jargon fetch)",
-    )
-    parser.add_argument(
-        "--community-json",
-        default=COMMUNITY_JSON,
-        type=Path,
-        help=argparse.SUPPRESS,
-    )
-
-    parser.set_defaults(
-        build=False,
-        rebuild=False,
-        show_all=False,
-        community=False,
-        term=None,
-    )
+    parser.set_defaults(build=False, rebuild=False, show_all=False, term=None)
 
     return parser
 
@@ -459,32 +538,45 @@ def main(argv: list[str] | None = None) -> None:
     argv_list = sys.argv[1:] if argv is None else list(argv)
     parser = build_parser()
 
-    # Show top-level help without rewriting args.
     if argv_list and argv_list[0] in ("-h", "--help"):
         parser.print_help()
         return
 
     args = parser.parse_args(argv_list)
 
-    # Join multi-word terms to support queries like "black hat".
     if isinstance(args.term, list):
         joined = " ".join(args.term).strip()
         args.term = joined if joined else None
 
-    # Compatibility: allow `jargon build` / `jargon fetch` style.
-    if args.term in {"build", "xml-to-json"} and not args.build:
-        args.build = True
+    # Subcommand dispatch via positional "term" slot
+    SUBCOMMANDS = {
+        "build":        (True,  "build",  None),
+        "xml-to-json":  (True,  "build",  None),
+        "fetch":        (False, "fetch",  None),
+        "info":         (False, "info",   None),
+        "update":       (False, "update", None),
+    }
+
+    args.fetch = False
+    args.info = False
+    args.update = False
+
+    if args.term in SUBCOMMANDS:
+        _, flag, _ = SUBCOMMANDS[args.term]
+        if flag == "build":
+            args.build = True
+        else:
+            setattr(args, flag, True)
         args.term = None
-    if args.term == "fetch":
-        args.fetch = True
-        args.term = None
-    else:
-        args.fetch = getattr(args, "fetch", False)
 
     if args.build:
         cmd_build(args)
     elif args.fetch:
         cmd_fetch(args)
+    elif args.info:
+        cmd_info(args)
+    elif args.update:
+        cmd_update(args)
     else:
         cmd_random(args)
 
