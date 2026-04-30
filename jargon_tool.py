@@ -328,29 +328,32 @@ def display_entry(entry: dict, show_all: bool) -> None:
         print(indent(sense["definition"], "  "))
 
 
-def choose_entry(entries: list[dict], term: str | None) -> dict:
-    if not term:
-        return random.choice(entries)
+def _sense_word(n: int) -> str:
+    return "sense" if n == 1 else "senses"
 
+
+def find_entries(entries: list[dict], term: str) -> tuple[list[dict], list[dict]]:
+    """Return (exact_matches, partial_matches) for term."""
     query = term.lower()
-    exact = [
-        e for e in entries
-        if e.get("term", "").lower() == query or e.get("id", "").lower() == query
-    ]
-    if exact:
-        return random.choice(exact)
-
-    partial = [
-        e for e in entries
-        if query in e.get("term", "").lower() or query in e.get("id", "").lower()
-    ]
-    if partial:
-        return random.choice(partial)
-
-    raise KeyError(f"No entry found for: {term}")
+    exact, partial = [], []
+    for e in entries:
+        t, i = e.get("term", "").lower(), e.get("id", "").lower()
+        if t == query or i == query:
+            exact.append(e)
+        elif query in t or query in i:
+            partial.append(e)
+    return exact, partial
 
 
-def show_entry(json_path: Path, show_all: bool = False, term: str | None = None) -> dict:
+def _print_match_list(matches: list[dict], term: str, hint: str = "") -> None:
+    label = "match" if len(matches) == 1 else "matches"
+    print(f"{len(matches)} {label} for {COLOR_TITLE}{term!r}{COLOR_RESET}{hint}:\n")
+    for e in sorted(matches, key=lambda x: x["term"].lower()):
+        n = len(e["senses"])
+        print(f"  {e['term']:<30}  {n} {_sense_word(n)}")
+
+
+def show_entry(json_path: Path, show_all: bool = False, term: str | None = None, search_only: bool = False) -> None:
     json_path = Path(json_path)
     if not json_path.exists():
         raise FileNotFoundError(f"JSON data not found: {json_path}")
@@ -358,9 +361,37 @@ def show_entry(json_path: Path, show_all: bool = False, term: str | None = None)
     with json_path.open("r", encoding="utf-8") as json_file:
         entries = json.load(json_file)
 
-    entry = choose_entry(entries, term)
-    display_entry(entry, show_all)
-    return entry
+    if not term:
+        display_entry(random.choice(entries), show_all)
+        return
+
+    exact, partial = find_entries(entries, term)
+    all_matches = exact + partial
+
+    if not all_matches:
+        raise KeyError(f"No entries found for: {term}")
+
+    # -s: always list everything, never show content
+    if search_only:
+        _print_match_list(all_matches, term)
+        return
+
+    # -a: show every matching entry in full
+    if show_all:
+        for entry in all_matches:
+            display_entry(entry, show_all=True)
+        return
+
+    # Lookup: prefer exact match; list when ambiguous
+    if exact:
+        display_entry(random.choice(exact), show_all=False)
+        return
+
+    if len(partial) == 1:
+        display_entry(partial[0], show_all=False)
+        return
+
+    _print_match_list(partial, term, hint=" — use a more specific term or -a to show all")
 
 
 def ensure_json(json_path: Path, xml_path: Path, force: bool = False) -> None:
@@ -475,7 +506,7 @@ def cmd_random(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
     try:
-        show_entry(args.json, show_all=args.show_all, term=args.term)
+        show_entry(args.json, show_all=args.show_all, term=args.term, search_only=args.search)
     except KeyError as exc:
         print(exc, file=sys.stderr)
         sys.exit(1)
@@ -529,7 +560,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show all senses instead of a single random sense",
     )
-    parser.set_defaults(build=False, rebuild=False, show_all=False, term=None)
+    parser.add_argument(
+        "-s", "--search",
+        action="store_true",
+        help="List matching terms without showing entry content",
+    )
+    parser.set_defaults(build=False, rebuild=False, show_all=False, search=False, term=None)
 
     return parser
 

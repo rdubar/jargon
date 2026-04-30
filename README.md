@@ -19,6 +19,7 @@ pipx install jargon-file
 ```
 
 ### From source
+
 ```bash
 gh repo clone rdubar/jargon && cd jargon
 uv venv && source .venv/bin/activate
@@ -30,20 +31,24 @@ uv pip install -e .
 ```bash
 jargon                  # random entry
 jargon endian           # look up a term (case-insensitive, partial match ok)
-jargon --all            # show all senses for the entry
+jargon -a endian        # show all senses
+jargon -s hack          # list all matching terms without showing content
+jargon hack -a          # show all entries that match 'hack' in full
 ```
+
+If a lookup has multiple partial matches, `jargon` lists them so you can narrow down. Use `-a` to dump all matches at once.
 
 ## Commands
 
 | Command | What it does |
-|---------|-------------|
+| ------- | ------------ |
 | `jargon [term]` | Random entry, or look up a term |
 | `jargon fetch` | Update community data to the latest |
 | `jargon info` | Show version, data stats, and credits |
 | `jargon update` | Check for a newer release and print the upgrade command |
 | `jargon build` | Rebuild JSON from a local DocBook XML file |
 
-**Flags:** `--all` / `-a` show all senses · `--json` override data path · `--xml` override XML source for `build`
+**Flags:** `-a` / `--all` show all senses (or all matching entries) · `-s` / `--search` list matches without showing content · `--json` override data path
 
 ## License
 
