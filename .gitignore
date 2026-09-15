@@ -22,3 +22,6 @@ build/
 # Legacy ESR data (not shipped in package — use community edition)
 data/jargon.json
 data/jargon.xml
+
+# jargonfile is its own separate git repo, not a submodule
+/jargonfile/
